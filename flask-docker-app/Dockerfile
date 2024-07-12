@@ -9,6 +9,7 @@ RUN alias python=python3
 
 ENV FLASK_APP app.py
 ENV PLATFORM 'Amazon ECS'
+EXPOSE 8000
 
 WORKDIR /app
 COPY . /app/
