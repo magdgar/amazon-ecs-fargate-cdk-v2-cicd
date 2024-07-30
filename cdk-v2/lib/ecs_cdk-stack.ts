@@ -82,7 +82,7 @@ export class EcsCdkStack extends cdk.Stack {
 
     taskDef.addToExecutionRolePolicy(executionRolePolicy);
 
-    const baseImage = 'public.ecr.aws/amazonlinux/amazonlinux:2022'
+    const baseImage = 'public.ecr.aws/nginx/nginx-unprivileged'
     const container = taskDef.addContainer('flask-app', {
       image: ecs.ContainerImage.fromRegistry(baseImage),
       memoryLimitMiB: 256,
@@ -91,7 +91,7 @@ export class EcsCdkStack extends cdk.Stack {
     });
 
     container.addPortMappings({
-      containerPort: 5000,
+      containerPort: 8080,
       protocol: ecs.Protocol.TCP
     });
 
