@@ -1,100 +1,54 @@
 <!DOCTYPE html>
 <html lang="en">
-
-    <head>
-        <meta charset="utf-8">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
-        <title>Simple Flask App</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link href="static/css/bootstrap.min.css" rel="stylesheet">
-        <style>
-            body {margin-top: 40px; background-color: #333;}
-            h3 { color: yellow; padding: 25px }
-            h4 { color: red; padding: 35px; font-weight: bold; font-size: 3em }
-        </style>
-        <link href="static/css/bootstrap-responsive.min.css" rel="stylesheet">
-        <!--[if lt IE 9]><script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
-    </head>
-
-    <body>
-        <div class="container">
-            <div class="hero-unit">
-                <h1>{{ name }}</h1>
-                <h2>Congratulations</h2>
-                <p>Your Flask application is now running on a container in <b>{{ platform }}</b></p>
-                <p>The container is running <a href="{{ flask_url }}">Flask</a> version {{ flask_version }} and Python {{ python_version }}</p>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Window View</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #FF9900; /* Amazon orange */
+            margin: 0;
+            padding: 0;
+        }
+        .window-container {
+            max-width: 1600px;
+            margin: 50px auto;
+            padding: 20px;
+            border: 10px solid #fff;
+            background-color: #f8f9fa;
+        }
+        .video-container {
+            position: relative;
+            padding-bottom: 75%;
+            height: 0;
+            overflow: hidden;
+        }
+        .video-container iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="window-container">
+        <div class="row row-cols-1 row-cols-md-2 g-4">
+            <div class="col">
+                <div class="video-container">
+                    <iframe src="https://pilatus.roundshot.com/#/?imgId=149628014" frameborder="0" allowfullscreen></iframe>
+                </div>
+            </div>
+            <div class="col">
+                <div class="video-container">
+                    <iframe src="https://jungfrau.roundshot.com/top-of-europe-jungfrau-ostgrat/" frameborder="0" allowfullscreen></iframe>
+                </div>
             </div>
         </div>
-    </body>
+    </div>
 
-    <!-- -->
-
-    <h3>Clowning in the cloud</h3>
-    <br/>
-    <span style='font-size:100px;'>&#129313;</span>
-    <span style='font-size:100px;'>&#129313;</span>
-    <span style='font-size:100px;'>&#129313;</span>
-    <span style='font-size:100px;'>&#129313;</span>
-    <span style='font-size:100px;'>&#129313;</span>
-    <span style='font-size:100px;'>&#129313;</span>
-    <span style='font-size:100px;'>&#129313;</span>
-
-    
-    <!-- 
-    <hr/>
-    <h4>Dope! wrong change rolled out</h4>
-    <span style='font-size:50px'>&#129318;</span>
-    <span style='font-size:50px'>&#129318;</span>
-    <span style='font-size:50px'>&#129318;</span>
-    <span style='font-size:50px'>&#129318;</span>
-    <span style='font-size:50px'>&#129318;</span>
-    <span style='font-size:50px'>&#129318;</span>
-    <span style='font-size:50px'>&#129318;</span>
-    <hr/>
-    -->
-
-    <!--
-    -->
-    <h3>Taco Time</h3>
-    <br/>
-    <span style='font-size:100px;'>&#127790;</span>
-    <span style='font-size:100px;'>&#127790;</span>
-    <span style='font-size:100px;'>&#127790;</span>
-    <span style='font-size:100px;'>&#127790;</span>
-    <span style='font-size:100px;'>&#127790;</span>
-    <span style='font-size:100px;'>&#127790;</span>
-    <span style='font-size:100px;'>&#127790;</span>
-    <!--
-    -->
-
-    <!-- 
-    -->
-    <h3>Apple a day is <i>good</i></h3>
-    <br/>
-    <span style='font-size:100px;'>&#127822;</span>
-    <span style='font-size:100px;'>&#127822;</span>
-    <span style='font-size:100px;'>&#127822;</span>
-    <span style='font-size:100px;'>&#127822;</span>
-    <span style='font-size:100px;'>&#127822;</span>
-    <span style='font-size:100px;'>&#127822;</span>
-    <span style='font-size:100px;'>&#127822;</span>
-    <!-- 
-    -->
-
-
-    <!-- 
-    -->
-
-    <h3>Unicorns</h3>
-    <br/>
-    <span style='font-size:100px;'>&#129412;</span>
-    <span style='font-size:100px;'>&#129412;</span>
-    <span style='font-size:100px;'>&#129412;</span>
-    <span style='font-size:100px;'>&#129412;</span>
-    <span style='font-size:100px;'>&#129412;</span>
-    <span style='font-size:100px;'>&#129412;</span>
-    <span style='font-size:100px;'>&#129412;</span>
-    <!-- 
-    -->
-
-
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
