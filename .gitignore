@@ -1,0 +1,3 @@
+cdk-v2/node_modules
+pipeline-helpers/**/node_modules
+**/package-lock.json
