@@ -18,7 +18,7 @@ export class ZurichDemoStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const topicMap = this.createNotificationTopics();
+    const topicMap: Map<String, sns.Topic> = this.createNotificationTopics();
 
     // GitHub
 
@@ -177,6 +177,10 @@ export class ZurichDemoStack extends cdk.Stack {
         events: [codebuild.ProjectNotificationEvents.BUILD_IN_PROGRESS],
       }
     );
+    // workaround for the issue: https://github.com/aws/aws-cdk/issues/29484
+    codeBuildProject.node.addDependency(
+      topicMap.get("BuildStartedNotification")!.node.findChild("Policy")
+    );
 
     codeBuildProject.notifyOnBuildFailed(
       "BuildFailedNotificationRule",
@@ -188,6 +192,10 @@ export class ZurichDemoStack extends cdk.Stack {
         createdBy: "T",
       }
     );
+    codeBuildProject.node.addDependency(
+      topicMap.get("BuildFailedNotification")!.node.findChild("Policy")
+    );
+
     codeBuildProject.notifyOnBuildSucceeded(
       "BuildSucceededNotificationRule",
       topicMap.get("BuildSucceededNotification")!,
@@ -197,6 +205,9 @@ export class ZurichDemoStack extends cdk.Stack {
         enabled: true,
         createdBy: "T",
       }
+    );
+    codeBuildProject.node.addDependency(
+      topicMap.get("BuildSucceededNotification")!.node.findChild("Policy")
     );
 
     //#endregion build
@@ -266,6 +277,7 @@ export class ZurichDemoStack extends cdk.Stack {
     const pipeline = new codepipeline.Pipeline(this, "myecspipeline", {
       pipelineName: "Demo-Website",
       executionMode: codepipeline.ExecutionMode.QUEUED,
+      pipelineType: codepipeline.PipelineType.V2,
       stages: [
         {
           stageName: "source",
@@ -323,7 +335,7 @@ export class ZurichDemoStack extends cdk.Stack {
     const approvalFunction = new lambda.Function(this, "approvalFunction", {
       runtime: lambda.Runtime.NODEJS_LATEST,
       handler: "approvalLambda.handler",
-      code: lambda.Code.fromAsset("pipeline-helpers/approval", {
+      code: lambda.Code.fromAsset("../pipeline-helpers/approval", {
         ignoreMode: cdk.IgnoreMode.GIT,
       }),
       logGroup: new cdk.aws_logs.LogGroup(this, `lambda-approval-log-group`, {
@@ -361,7 +373,7 @@ export class ZurichDemoStack extends cdk.Stack {
       {
         runtime: lambda.Runtime.NODEJS_LATEST,
         handler: "setStageTransition.handler",
-        code: lambda.Code.fromAsset("pipeline-helpers/setStageTransition", {
+        code: lambda.Code.fromAsset("../pipeline-helpers/setStageTransition", {
           ignoreMode: cdk.IgnoreMode.GIT,
         }),
         logGroup: new cdk.aws_logs.LogGroup(
@@ -408,7 +420,7 @@ export class ZurichDemoStack extends cdk.Stack {
       {
         runtime: lambda.Runtime.NODEJS_LATEST,
         handler: "flipStageTransition.handler",
-        code: lambda.Code.fromAsset("pipeline-helpers/flipStageTransition", {
+        code: lambda.Code.fromAsset("../pipeline-helpers/flipStageTransition", {
           ignoreMode: cdk.IgnoreMode.GIT,
         }),
         logGroup: new cdk.aws_logs.LogGroup(
@@ -554,7 +566,7 @@ export class ZurichDemoStack extends cdk.Stack {
     const fargateService =
       new ecs_patterns.ApplicationLoadBalancedFargateService(
         this,
-        `ecs-$${stageName}-service`,
+        `ecs-${stageName}-service`,
         {
           cluster: cluster,
           taskDefinition: taskDef,
