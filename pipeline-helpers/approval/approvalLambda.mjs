@@ -5,13 +5,13 @@ import {
 } from "@aws-sdk/client-codepipeline";
 
 /**
- * 
+ *
  * @param {*} event Approval data, in form of: { "pipelineExecutionId": "GUID", "approvalAction": "Approved" || "Rejected", "summary": "Approval summary"}
- * @param {*} context 
+ * @param {*} context
  * @returns 200 if successful, throws error otherwise.
  */
 export const handler = async (event, context) => {
-  const pipelineExecutionId = event.pipelineExecutionId;//GUID of pipeline execution
+  const pipelineExecutionId = event.pipelineExecutionId; //GUID of pipeline execution
   const approvalAction = event.approvalAction; // "Approved"; //|| "Rejected",
   const summary = event.summary;
 
@@ -76,4 +76,8 @@ export const handler = async (event, context) => {
       throw new Error("Approval failed");
     }
   }
+
+  return {
+    statusCode: 200,
+  };
 };

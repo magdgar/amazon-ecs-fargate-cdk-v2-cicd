@@ -13,26 +13,14 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 
 import { Construct } from "constructs";
 
+const baseImage = "public.ecr.aws/nginx/nginx-unprivileged";
 export class ZurichDemoStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const notificationTopics = [
-      "PipelineExecutionNotification",
-      "ManualApprovalNotification",
-      "BuildStartedNotification",
-      "BuildFailedNotification",
-      "BuildSucceededNotification",
-    ];
-    const topicMap = new Map<String, sns.Topic>();
+    const topicMap = this.createNotificationTopics();
 
-    notificationTopics.forEach((topicName) => {
-      const notificationTopic = new sns.Topic(this, topicName, {
-        topicName: topicName,
-      });
-      notificationTopic.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
-      topicMap.set(topicName, notificationTopic);
-    });
+    // GitHub
 
     const githubUserName = new cdk.CfnParameter(this, "githubUserName", {
       type: "String",
@@ -57,6 +45,32 @@ export class ZurichDemoStack extends cdk.Stack {
       }
     );
 
+    const gitHubSource = codebuild.Source.gitHub({
+      owner: githubUserName.valueAsString,
+      repo: githubRepository.valueAsString,
+      webhook: true, // optional, default: true if `webhookfilteres` were provided, false otherwise
+      webhookFilters: [
+        codebuild.FilterGroup.inEventOf(codebuild.EventAction.PUSH).andBranchIs(
+          "main"
+        ),
+      ], // optional, by default all pushes and pull requests will trigger a build
+    });
+
+    //CodeCommit
+    /*const codeCommitRepository = new cdk.aws_codecommit.Repository(
+      this,
+      "codeCommitRepo",
+      {
+        repositoryName: "demo-web-app",
+        description: "flask app deployed with codepipeline",
+      }
+    );
+    codeCommitRepository.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
+    const codeCommitSource = codebuild.Source.codeCommit({
+      repository: codeCommitRepository,
+    });*/
+
     const ecrRepo = new ecr.Repository(this, "ecrRepo", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       emptyOnDelete: true,
@@ -76,206 +90,31 @@ export class ZurichDemoStack extends cdk.Stack {
       vpc: vpc,
     });
 
-    const ecsLogging = new ecs.AwsLogDriver({
-      streamPrefix: "ecs-logs",
-      logGroup: new cdk.aws_logs.LogGroup(this, "ecs-log-group-beta", {
-        logGroupName: "zurich-demo/ecs/beta",
-        retention: 30,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }),
+    const fargateProdService = this.createService(baseImage, cluster, "prod");
+
+    const fargateBetaService = this.createService(baseImage, cluster, "beta");
+
+    //#region build
+
+    const buildLogGroup = new cdk.aws_logs.LogGroup(this, "build-log-group", {
+      logGroupName: "zurich-demo/build-logs",
+      retention: 30,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
-
-    const ecsAlphaLogging = new ecs.AwsLogDriver({
-      streamPrefix: "ecs-alpha-logs",
-      logGroup: new cdk.aws_logs.LogGroup(this, "ecs-log-group-alpha", {
-        logGroupName: "zurich-demo/ecs/alpha",
-        retention: 30,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }),
-    });
-
-
-
-    // ***ecs contructs***
-
-    const ecsTaskECRAccessPolicy = new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      resources: ["*"],
-      actions: [
-        "ecr:getauthorizationtoken",
-        "ecr:batchchecklayeravailability",
-        "ecr:getdownloadurlforlayer",
-        "ecr:batchgetimage",
-      ],
-    });
-    const ecsTaskLogAccessPolicy = new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      resources: ["*"],
-      actions: ["logs:CreateLogStream", "logs:putlogevents"],
-    });
-
-    const taskRole = new iam.Role(this, `ecs-taskrole-${this.stackName}`, {
-      roleName: `ecs-taskrole-${this.stackName}`,
-      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
-    });
-    
-    const taskDef = new ecs.FargateTaskDefinition(this, "ecs-beta-taskdef", {
-      taskRole: taskRole,
-    });
-    taskDef.addToExecutionRolePolicy(ecsTaskECRAccessPolicy);
-    taskDef.addToExecutionRolePolicy(ecsTaskLogAccessPolicy);
-    taskDef.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
-
-    const alphaTaskDef = new ecs.FargateTaskDefinition(
-      this,
-      "ecs-alpha-taskdef",
-      {
-        taskRole: taskRole,
-      }
-    );
-    alphaTaskDef.addToExecutionRolePolicy(ecsTaskECRAccessPolicy);
-    alphaTaskDef.addToExecutionRolePolicy(ecsTaskLogAccessPolicy);
-    alphaTaskDef.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
-
-    const baseImage = "public.ecr.aws/nginx/nginx-unprivileged";
-  
-    //#region Beta
-    const container = taskDef.addContainer("beta-flask-app-container", {
-      containerName: "flask-app",
-      image: ecs.ContainerImage.fromRegistry(baseImage),
-      memoryLimitMiB: 256,
-      cpu: 256,
-      logging: ecsLogging,
-      portMappings: [
-        {
-          containerPort: 8080,
-          protocol: ecs.Protocol.TCP,
-        },
-      ],
-      healthCheck: {
-        command: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"],
-        timeout: cdk.Duration.seconds(5),
-        retries: 5,
-        interval: cdk.Duration.seconds(5),
-        startPeriod: cdk.Duration.seconds(30),
-      },
-    });
-
-    const fargateService =
-      new ecs_patterns.ApplicationLoadBalancedFargateService(
-        this,
-        "ecs-beta-service",
-        {
-          cluster: cluster,
-          taskDefinition: taskDef,
-          publicLoadBalancer: true,
-          desiredCount: 1,
-          listenerPort: 80,
-          serviceName: "beta-service",
-          loadBalancerName: "beta-service",
-        }
-      );
-
-    // where do these constants come from? 6, 10, 60?
-
-    const scaling = fargateService.service.autoScaleTaskCount({
-      maxCapacity: 4,
-    });
-    scaling.scaleOnCpuUtilization("cpuscaling", {
-      targetUtilizationPercent: 70,
-      scaleInCooldown: cdk.Duration.seconds(60),
-      scaleOutCooldown: cdk.Duration.seconds(60),
-    });
-
-    //#endregion Beta
-
-    //#region Alpha
-    const alphaContainer = alphaTaskDef.addContainer(
-      "alpha-flask-app-container",
-      {
-        containerName: "flask-app",
-        image: ecs.ContainerImage.fromRegistry(baseImage),
-        memoryLimitMiB: 256,
-        cpu: 128,
-        logging: ecsAlphaLogging,
-        portMappings: [
-          {
-            containerPort: 8080,
-            protocol: ecs.Protocol.TCP,
-          },
-        ],
-        healthCheck: {
-          command: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"],
-          timeout: cdk.Duration.seconds(5),
-          retries: 5,
-          interval: cdk.Duration.seconds(5),
-          startPeriod: cdk.Duration.seconds(30),
-        },
-      }
-    );
-
-    const fargateAlphaService =
-      new ecs_patterns.ApplicationLoadBalancedFargateService(
-        this,
-        "ecs-alpha-service",
-        {
-          cluster: cluster,
-          taskDefinition: alphaTaskDef,
-          publicLoadBalancer: true,
-          desiredCount: 1,
-          listenerPort: 80,
-          serviceName: "alpha-service",
-          loadBalancerName: "alpha-service",
-        }
-      );
-
-    // where do these constants come from? 6, 10, 60?
-
-    const fargateAlphaScaling = fargateAlphaService.service.autoScaleTaskCount({
-      maxCapacity: 2,
-    });
-
-    fargateAlphaScaling.scaleOnCpuUtilization("cpuscaling", {
-      targetUtilizationPercent: 70,
-      scaleInCooldown: cdk.Duration.seconds(60),
-      scaleOutCooldown: cdk.Duration.seconds(60),
-    });
-
-    //#endregion Alpha
-
-    const gitHubSource = codebuild.Source.gitHub({
-          owner: githubUserName.valueAsString,
-          repo: githubRepository.valueAsString,
-          webhook: true, // optional, default: true if `webhookfilteres` were provided, false otherwise
-          webhookFilters: [
-            codebuild.FilterGroup.inEventOf(
-              codebuild.EventAction.PUSH
-            ).andBranchIs("main"),
-          ], // optional, by default all pushes and pull requests will trigger a build
-        });
-
-    const buildLogGroup = new cdk.aws_logs.LogGroup(
-      this,
-      "build-log-group",
-      {
-        logGroupName: "zurich-demo/build-logs",
-        retention: 30,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }
-    );
 
     // codebuild - project
-    const codeBuildProject = new codebuild.Project(this, "myProject", {
+    const codeBuildProject = new codebuild.Project(this, "codeBuildProject", {
       projectName: `${this.stackName}`,
-      source: gitHubSource,
+      //CodeCommit
+      source: gitHubSource, // codeCommitSource || gitHubSource
       environment: {
         buildImage: codebuild.LinuxBuildImage.AMAZON_LINUX_2_5,
         privileged: true,
       },
       environmentVariables: {
-        cluster_name: {
+        /*cluster_name: {
           value: `${cluster.clusterName}`,
-        },
+        },*/
         ecr_repo_uri: {
           value: `${ecrRepo.repositoryUri}`,
         },
@@ -360,34 +199,43 @@ export class ZurichDemoStack extends cdk.Stack {
       }
     );
 
+    //#endregion build
+
     // ***pipeline actions***
 
     const sourceOutput = new codepipeline.Artifact();
     const buildOutput = new codepipeline.Artifact();
-    
-    const nameOfGithubPersonTokenParameterAsString = githubPersonalTokenSecretName.valueAsString;
-    
+
     const sourceAction = new codepipeline_actions.GitHubSourceAction({
       actionName: "github_source",
       owner: githubUserName.valueAsString,
       repo: githubRepository.valueAsString,
       branch: "main",
       oauthToken: cdk.SecretValue.secretsManager(
-        nameOfGithubPersonTokenParameterAsString
+        githubPersonalTokenSecretName.valueAsString
       ),
       output: sourceOutput,
     });
+
+    //CodeCommit
+    /*
+    const sourceAction = new codepipeline_actions.CodeCommitSourceAction({
+      actionName: "source",
+      repository: codeCommitRepository,
+      output: sourceOutput,
+    });
+    */
 
     const buildAction = new codepipeline_actions.CodeBuildAction({
       actionName: "codebuild",
       project: codeBuildProject,
       input: sourceOutput,
-      outputs: [buildOutput], // optional
+      outputs: [buildOutput],
     });
 
-    const deployToAlphaAction = new codepipeline_actions.EcsDeployAction({
+    const deployToBetaAction = new codepipeline_actions.EcsDeployAction({
       actionName: "deployToAlphaAction",
-      service: fargateAlphaService.service,
+      service: fargateBetaService.service,
       imageFile: new codepipeline.ArtifactPath(
         buildOutput,
         `imagedefinitions.json`
@@ -395,16 +243,17 @@ export class ZurichDemoStack extends cdk.Stack {
       deploymentTimeout: cdk.Duration.minutes(5),
     });
 
-    const manualApprovalAction = new codepipeline_actions.ManualApprovalAction({
-      actionName: "approve",
-      externalEntityLink: fargateAlphaService.loadBalancer.loadBalancerDnsName,
-      additionalInformation: "Have a look at the site",
-      notificationTopic: topicMap.get("ManualApprovalNotification"),
-    });
+    const manualBetaApprovalAction =
+      new codepipeline_actions.ManualApprovalAction({
+        actionName: "approve",
+        externalEntityLink: fargateBetaService.loadBalancer.loadBalancerDnsName,
+        additionalInformation: "Have a look at the site",
+        notificationTopic: topicMap.get("ManualApprovalNotification"),
+      });
 
-    const deployAction = new codepipeline_actions.EcsDeployAction({
+    const deployToProdAction = new codepipeline_actions.EcsDeployAction({
       actionName: "deployAction",
-      service: fargateService.service,
+      service: fargateProdService.service,
       imageFile: new codepipeline.ArtifactPath(
         buildOutput,
         `imagedefinitions.json`
@@ -427,16 +276,16 @@ export class ZurichDemoStack extends cdk.Stack {
           actions: [buildAction],
         },
         {
-          stageName: "deploy-to-alpha",
-          actions: [deployToAlphaAction],
+          stageName: "deploy-to-beta",
+          actions: [deployToBetaAction],
         },
         {
           stageName: "approve",
-          actions: [manualApprovalAction],
+          actions: [manualBetaApprovalAction],
         },
         {
           stageName: "deploy-to-prod-1",
-          actions: [deployAction],
+          actions: [deployToProdAction],
         },
       ],
     });
@@ -474,7 +323,14 @@ export class ZurichDemoStack extends cdk.Stack {
     const approvalFunction = new lambda.Function(this, "approvalFunction", {
       runtime: lambda.Runtime.NODEJS_LATEST,
       handler: "approvalLambda.handler",
-      code: lambda.Code.fromAsset("pipeline-helpers/approval"),
+      code: lambda.Code.fromAsset("pipeline-helpers/approval", {
+        ignoreMode: cdk.IgnoreMode.GIT,
+      }),
+      logGroup: new cdk.aws_logs.LogGroup(this, `lambda-approval-log-group`, {
+        logGroupName: `zurich-demo/lambda/approval`,
+        retention: 30,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
       role: new iam.Role(this, "approvalFunctionRole", {
         assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
         managedPolicies: [
@@ -499,11 +355,227 @@ export class ZurichDemoStack extends cdk.Stack {
       }),
     });
 
+    const setStageTransitionFunction = new lambda.Function(
+      this,
+      "stageTransitionFunction",
+      {
+        runtime: lambda.Runtime.NODEJS_LATEST,
+        handler: "setStageTransition.handler",
+        code: lambda.Code.fromAsset("pipeline-helpers/setStageTransition", {
+          ignoreMode: cdk.IgnoreMode.GIT,
+        }),
+        logGroup: new cdk.aws_logs.LogGroup(
+          this,
+          `lambda-set-stage-transition-log-group`,
+          {
+            logGroupName: `zurich-demo/lambda/setStagetransition`,
+            retention: 30,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+          }
+        ),
+        environment: {
+          STAGE_NAMES: pipeline.stages
+            .map((stage) => stage.stageName)
+            .join(","),
+        },
+        role: new iam.Role(this, "setStageTransitionFunctionRole", {
+          assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+          managedPolicies: [
+            iam.ManagedPolicy.fromAwsManagedPolicyName(
+              "service-role/AWSLambdaBasicExecutionRole"
+            ),
+          ],
+          inlinePolicies: {
+            inline: new iam.PolicyDocument({
+              statements: [
+                new iam.PolicyStatement({
+                  actions: [
+                    "codepipeline:EnableStageTransition",
+                    "codepipeline:DisableStageTransition",
+                  ],
+                  resources: [`${pipeline.pipelineArn}/*`],
+                }),
+              ],
+            }),
+          },
+        }),
+      }
+    );
+
+    const flipStageTransitionFunction = new lambda.Function(
+      this,
+      "flipStageTransitionFunction",
+      {
+        runtime: lambda.Runtime.NODEJS_LATEST,
+        handler: "flipStageTransition.handler",
+        code: lambda.Code.fromAsset("pipeline-helpers/flipStageTransition", {
+          ignoreMode: cdk.IgnoreMode.GIT,
+        }),
+        logGroup: new cdk.aws_logs.LogGroup(
+          this,
+          `lambda-flip-stage-transition-log-group`,
+          {
+            logGroupName: `zurich-demo/lambda/flipStagetransition`,
+            retention: 30,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+          }
+        ),
+        environment: {
+          STAGE_NAMES: pipeline.stages
+            .map((stage) => stage.stageName)
+            .join(","),
+        },
+        role: new iam.Role(this, "flipStageTransitionFunctionRole", {
+          assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+          managedPolicies: [
+            iam.ManagedPolicy.fromAwsManagedPolicyName(
+              "service-role/AWSLambdaBasicExecutionRole"
+            ),
+          ],
+          inlinePolicies: {
+            inline: new iam.PolicyDocument({
+              statements: [
+                new iam.PolicyStatement({
+                  actions: [
+                    "codepipeline:EnableStageTransition",
+                    "codepipeline:DisableStageTransition",
+                  ],
+                  resources: [`${pipeline.pipelineArn}/*`],
+                }),
+                new iam.PolicyStatement({
+                  actions: ["codepipeline:GetPipelineState"],
+                  resources: [`${pipeline.pipelineArn}`],
+                }),
+              ],
+            }),
+          },
+        }),
+      }
+    );
+
     new cdk.CfnOutput(this, "image", {
       value: ecrRepo.repositoryUri + ":latest",
     });
-    new cdk.CfnOutput(this, "loadbalancerdns", {
-      value: fargateService.loadBalancer.loadBalancerDnsName,
+    new cdk.CfnOutput(this, "BetaLoadbalancerDns", {
+      value: fargateBetaService.loadBalancer.loadBalancerDnsName,
     });
+    new cdk.CfnOutput(this, "ProdLoadbalancerDns", {
+      value: fargateProdService.loadBalancer.loadBalancerDnsName,
+    });
+  }
+
+  private createNotificationTopics(): Map<String, sns.Topic> {
+    const notificationTopics = [
+      "PipelineExecutionNotification",
+      "ManualApprovalNotification",
+      "BuildStartedNotification",
+      "BuildFailedNotification",
+      "BuildSucceededNotification",
+    ];
+    const topicMap = new Map<String, sns.Topic>();
+
+    notificationTopics.forEach((topicName) => {
+      const notificationTopic = new sns.Topic(this, topicName, {
+        topicName: topicName,
+      });
+      notificationTopic.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+      topicMap.set(topicName, notificationTopic);
+    });
+    return topicMap;
+  }
+
+  private createService(
+    baseImage: string,
+    cluster: cdk.aws_ecs.Cluster,
+    stageName: string
+  ) {
+    const ecsLogging = new ecs.AwsLogDriver({
+      streamPrefix: `ecs-${stageName}-logs`,
+      logGroup: new cdk.aws_logs.LogGroup(this, `ecs-log-group-${stageName}`, {
+        logGroupName: `zurich-demo/ecs/${stageName}`,
+        retention: 30,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    });
+
+    const taskRole = new iam.Role(
+      this,
+      `ecs-taskrole-${this.stackName}-${stageName}`,
+      {
+        roleName: `ecs-taskrole-${this.stackName}-${stageName}`,
+        assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+      }
+    );
+
+    const ecsTaskExecutionPolicy = new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      resources: ["*"],
+      actions: [
+        "ecr:getauthorizationtoken",
+        "ecr:batchchecklayeravailability",
+        "ecr:getdownloadurlforlayer",
+        "ecr:batchgetimage",
+        "logs:CreateLogStream",
+        "logs:putlogevents",
+      ],
+    });
+
+    const taskDef = new ecs.FargateTaskDefinition(
+      this,
+      `ecs-${stageName}-taskdef`,
+      {
+        taskRole: taskRole,
+      }
+    );
+    taskDef.addToExecutionRolePolicy(ecsTaskExecutionPolicy);
+    taskDef.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
+    const container = taskDef.addContainer(`flask-app-container-${stageName}`, {
+      containerName: "flask-app",
+      image: ecs.ContainerImage.fromRegistry(baseImage),
+      memoryLimitMiB: 256,
+      cpu: 128,
+      logging: ecsLogging,
+      portMappings: [
+        {
+          containerPort: 8080,
+          protocol: ecs.Protocol.TCP,
+        },
+      ],
+      healthCheck: {
+        command: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"],
+        timeout: cdk.Duration.seconds(5),
+        retries: 5,
+        interval: cdk.Duration.seconds(15),
+        startPeriod: cdk.Duration.seconds(30),
+      },
+    });
+
+    const fargateService =
+      new ecs_patterns.ApplicationLoadBalancedFargateService(
+        this,
+        `ecs-$${stageName}-service`,
+        {
+          cluster: cluster,
+          taskDefinition: taskDef,
+          publicLoadBalancer: true,
+          desiredCount: 1,
+          listenerPort: 80,
+          serviceName: `${stageName}-service`,
+          loadBalancerName: `${stageName}-service`,
+        }
+      );
+
+    // where do these constants come from? 6, 10, 60?
+    const fargateScaling = fargateService.service.autoScaleTaskCount({
+      maxCapacity: 2,
+    });
+
+    fargateScaling.scaleOnCpuUtilization("cpuscaling", {
+      targetUtilizationPercent: 70,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+    return fargateService;
   }
 }
