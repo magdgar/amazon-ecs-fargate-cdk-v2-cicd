@@ -56,24 +56,9 @@ export class ZurichDemoStack extends cdk.Stack {
       ], // optional, by default all pushes and pull requests will trigger a build
     });
 
-    //CodeCommit
-    /*const codeCommitRepository = new cdk.aws_codecommit.Repository(
-      this,
-      "codeCommitRepo",
-      {
-        repositoryName: "demo-web-app",
-        description: "flask app deployed with codepipeline",
-      }
-    );
-    codeCommitRepository.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
-
-    const codeCommitSource = codebuild.Source.codeCommit({
-      repository: codeCommitRepository,
-    });*/
-
     const ecrRepo = new ecr.Repository(this, "ecrRepo", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      emptyOnDelete: true,
+      emptyOnDelete: true
     });
 
     const vpc = new ec2.Vpc(this, "ecs-cdk-vpc", {
@@ -99,7 +84,7 @@ export class ZurichDemoStack extends cdk.Stack {
     const buildLogGroup = new cdk.aws_logs.LogGroup(this, "build-log-group", {
       logGroupName: "zurich-demo/build-logs",
       retention: 30,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      removalPolicy: cdk.RemovalPolicy.DESTROY 
     });
 
     // codebuild - project
@@ -189,7 +174,7 @@ export class ZurichDemoStack extends cdk.Stack {
         detailType: codestarnotifications.DetailType.FULL,
         notificationRuleName: "BuildFailedNotificationRule",
         enabled: true,
-        createdBy: "T",
+        createdBy: "T"
       }
     );
     codeBuildProject.node.addDependency(
@@ -203,7 +188,7 @@ export class ZurichDemoStack extends cdk.Stack {
         detailType: codestarnotifications.DetailType.FULL,
         notificationRuleName: "BuildSucceededNotificationRule",
         enabled: true,
-        createdBy: "T",
+        createdBy: "T"
       }
     );
     codeBuildProject.node.addDependency(
@@ -227,15 +212,6 @@ export class ZurichDemoStack extends cdk.Stack {
       ),
       output: sourceOutput,
     });
-
-    //CodeCommit
-    /*
-    const sourceAction = new codepipeline_actions.CodeCommitSourceAction({
-      actionName: "source",
-      repository: codeCommitRepository,
-      output: sourceOutput,
-    });
-    */
 
     const buildAction = new codepipeline_actions.CodeBuildAction({
       actionName: "codebuild",
@@ -339,9 +315,9 @@ export class ZurichDemoStack extends cdk.Stack {
         ignoreMode: cdk.IgnoreMode.GIT,
       }),
       logGroup: new cdk.aws_logs.LogGroup(this, `lambda-approval-log-group`, {
-        logGroupName: `zurich-demo/lambda/approval`,
-        retention: 30,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
+       logGroupName: `zurich-demo/lambda/approval`,
+       retention: 30,
+       removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       role: new iam.Role(this, "approvalFunctionRole", {
         assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
@@ -414,6 +390,16 @@ export class ZurichDemoStack extends cdk.Stack {
       }
     );
 
+    const lambdaLogGroup = new cdk.aws_logs.LogGroup(
+      this,
+      `lambda-flip-stage-transition-log-group`,
+      {
+        logGroupName: `zurich-demo/lambda/flipStagetransition`,
+        retention: 30,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }
+    );
+
     const flipStageTransitionFunction = new lambda.Function(
       this,
       "flipStageTransitionFunction",
@@ -423,15 +409,7 @@ export class ZurichDemoStack extends cdk.Stack {
         code: lambda.Code.fromAsset("../pipeline-helpers/flipStageTransition", {
           ignoreMode: cdk.IgnoreMode.GIT,
         }),
-        logGroup: new cdk.aws_logs.LogGroup(
-          this,
-          `lambda-flip-stage-transition-log-group`,
-          {
-            logGroupName: `zurich-demo/lambda/flipStagetransition`,
-            retention: 30,
-            removalPolicy: cdk.RemovalPolicy.DESTROY,
-          }
-        ),
+        logGroup: lambdaLogGroup,
         environment: {
           STAGE_NAMES: pipeline.stages
             .map((stage) => stage.stageName)
@@ -542,7 +520,7 @@ export class ZurichDemoStack extends cdk.Stack {
     taskDef.addToExecutionRolePolicy(ecsTaskExecutionPolicy);
     taskDef.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
-    const container = taskDef.addContainer(`flask-app-container-${stageName}`, {
+    taskDef.addContainer(`flask-app-container-${stageName}`, {
       containerName: "flask-app",
       image: ecs.ContainerImage.fromRegistry(baseImage),
       memoryLimitMiB: 256,
@@ -551,6 +529,27 @@ export class ZurichDemoStack extends cdk.Stack {
       portMappings: [
         {
           containerPort: 8080,
+          protocol: ecs.Protocol.TCP,
+        },
+      ],
+      healthCheck: {
+        command: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"],
+        timeout: cdk.Duration.seconds(5),
+        retries: 5,
+        interval: cdk.Duration.seconds(15),
+        startPeriod: cdk.Duration.seconds(30),
+      },
+    });
+
+    taskDef.addContainer(`app-config-agent-${stageName}`, { 
+      containerName: "app-config-agant",
+      image: ecs.ContainerImage.fromRegistry("public.ecr.aws/aws-appconfig/aws-appconfig-agent:2.x"),
+      memoryLimitMiB: 256,
+      cpu: 128,
+      logging: ecsLogging,
+      portMappings: [
+        {
+          containerPort: 2772,
           protocol: ecs.Protocol.TCP,
         },
       ],
