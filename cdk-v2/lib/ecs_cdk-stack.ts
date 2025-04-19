@@ -3,6 +3,7 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as sns from "aws-cdk-lib/aws-sns";
+import * as appconfig from 'aws-cdk-lib/aws-appconfig';
 import * as ecs_patterns from "aws-cdk-lib/aws-ecs-patterns";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
@@ -14,7 +15,14 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
 const baseImage = "public.ecr.aws/nginx/nginx-unprivileged";
+
+
+// interface EvidentlyClientSideEvaluationEcsStack extends cdk.NestedStackProps {
+//   ecs_service: ecs.FargateService
+// }
+
 export class ZurichDemoStack extends cdk.Stack {
+  // evidentlyResources: EvidentlyClientSideEvaluationEcsStack
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
@@ -41,7 +49,7 @@ export class ZurichDemoStack extends cdk.Stack {
         description:
           "The name of the AWS Secrets Manager Secret which holds the GitHub Personal Access Token for this project.",
         default:
-          "/aws-samples/amazon-ecs-fargate-cdk-v2-cicd/github/personal_access_token",
+          "/aws-samples/amazon-ecs-fargate-cdk-cicd/github/personal_access_token",
       }
     );
 
@@ -75,9 +83,11 @@ export class ZurichDemoStack extends cdk.Stack {
       vpc: vpc,
     });
 
-    const fargateProdService = this.createService(baseImage, cluster, "prod");
+    const appConfigMetadata = this.createAppConfigResources()
 
-    const fargateBetaService = this.createService(baseImage, cluster, "beta");
+    const fargateProdService = this.createService(baseImage, cluster, "prod", appConfigMetadata);
+
+    const fargateBetaService = this.createService(baseImage, cluster, "beta", appConfigMetadata);
 
     //#region build
 
@@ -205,7 +215,7 @@ export class ZurichDemoStack extends cdk.Stack {
     const sourceAction = new codepipeline_actions.GitHubSourceAction({
       actionName: "github_source",
       owner: githubUserName.valueAsString,
-      repo: githubRepository.valueAsString,
+      repo: githubRepository.valueAsString, 
       branch: "main",
       oauthToken: cdk.SecretValue.secretsManager(
         githubPersonalTokenSecretName.valueAsString
@@ -477,7 +487,8 @@ export class ZurichDemoStack extends cdk.Stack {
   private createService(
     baseImage: string,
     cluster: cdk.aws_ecs.Cluster,
-    stageName: string
+    stageName: string,
+    appConfigConf: AppConfigMetadata
   ) {
     const ecsLogging = new ecs.AwsLogDriver({
       streamPrefix: `ecs-${stageName}-logs`,
@@ -532,6 +543,12 @@ export class ZurichDemoStack extends cdk.Stack {
           protocol: ecs.Protocol.TCP,
         },
       ],
+      environment: {
+        APPCONFIG_APPLICATION_ID : appConfigConf.applicationId,
+        APPCONFIG_ENVIRONMENT : appConfigConf.environmentId,
+        APPCONFIG_CONFIGURATION_ID: appConfigConf.configurationProfileId,
+        FEATURE_FLAG_NAME : appConfigConf.featureFlagName
+      },
       healthCheck: {
         command: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"],
         timeout: cdk.Duration.seconds(5),
@@ -562,6 +579,14 @@ export class ZurichDemoStack extends cdk.Stack {
       },
     });
 
+    taskDef.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ['appconfig:StartConfigurationSession', 'appconfig:GetLatestConfiguration'],
+        effect: iam.Effect.ALLOW,
+        resources: ["*"]
+      })
+    )
+
     const fargateService =
       new ecs_patterns.ApplicationLoadBalancedFargateService(
         this,
@@ -587,6 +612,83 @@ export class ZurichDemoStack extends cdk.Stack {
       scaleInCooldown: cdk.Duration.seconds(60),
       scaleOutCooldown: cdk.Duration.seconds(60),
     });
+
     return fargateService;
+  }
+
+    // appconfig
+
+    private createAppConfigResources() {
+      // Create an AppConfig Application
+      const appConfigApp = new appconfig.CfnApplication(this, 'SwissSummitAppConfigApplication', {
+        name: 'SummitDemoApplication',
+      });
+  
+      const appconfigConfigurationProfile = new appconfig.CfnConfigurationProfile(this, 'SwissSummitAppconfigConfigurationProfile', {
+        applicationId: appConfigApp.ref,
+        locationUri: 'hosted',
+        name: 'UXProfile',
+        type: 'AWS.AppConfig.FeatureFlags',
+      });
+  
+      const myHostedConfigurationVersion = new appconfig.CfnHostedConfigurationVersion(this, 'SwissSummitHostedConfigurationVersion', {
+        applicationId: appConfigApp.ref,
+        configurationProfileId: appconfigConfigurationProfile.ref,
+        contentType: 'application/json',
+        content: JSON.stringify({
+          "version": "1",
+          "flags": {
+            experimentalCX: {
+              "name": "experimentalCX",
+            }
+          },
+          "values": {
+            experimentalCX: {
+              "enabled": true,
+            }
+          }
+        }),
+      });
+  
+      const appconfigEnv = new appconfig.CfnEnvironment(this, 'SwissDemoAppconfigEnv', {
+        applicationId: appConfigApp.ref,
+        name: 'dev',
+      });
+  
+      const myDeploymentStrategy = new appconfig.CfnDeploymentStrategy(this, 'SwissDemoDeploymentStrategy', {
+        deploymentDurationInMinutes: 0,
+        growthFactor: 100,
+        name: 'swissDemoDeploymentStrategy',
+        replicateTo: 'SSM_DOCUMENT',
+        finalBakeTimeInMinutes: 0,
+      });
+  
+      const appConfigMetadata = {
+        applicationId: appConfigApp.ref,
+        configurationProfileId: appconfigConfigurationProfile.ref,
+        configurationVersion: myHostedConfigurationVersion.ref,
+        environmentId: appconfigEnv.ref,
+        deploymentStrategyId: myDeploymentStrategy.ref,
+      }
+
+      const deployment = new appconfig.CfnDeployment(this, 'InitialDeployment', appConfigMetadata); 
+      return new AppConfigMetadata(appConfigApp.ref, appconfigEnv.ref, appconfigConfigurationProfile.ref, "experimentalCX")
+    }
+    
+
+
+}
+
+class AppConfigMetadata {
+  applicationId: string;
+  environmentId: string;
+  configurationProfileId: string
+  featureFlagName: string
+
+  constructor(applicationId: string, environmentId: string, configurationProfileId: string, featureflagName: string) {
+    this.applicationId = applicationId;
+    this.environmentId = environmentId;
+    this.configurationProfileId = configurationProfileId;
+    this.featureFlagName = featureflagName
   }
 }
